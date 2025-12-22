@@ -3,6 +3,7 @@ import re
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import requests
+import time
 
 OLLAMA_URL = "https://yyzx6tvepstx5b-11434.proxy.runpod.net/api/generate"
 AVAILABLE_MODELS = {
@@ -93,12 +94,29 @@ def generate(data: Req):
     }
 
     try:
+        start = time.perf_counter()
         resp = requests.post(OLLAMA_URL, json=payload, timeout=90)
+        elapsed_ms = (time.perf_counter() - start) * 1000
         resp.raise_for_status()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    raw = resp.json().get("response", "")
+    data = resp.json()
+    raw = data.get("response", "")
+
+    prompt_tokens = data.get("prompt_eval_count")
+    completion_tokens = data.get("eval_count")
+    total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
+
+    metrics = {
+        "latency_ms": round(elapsed_ms, 2),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "total_duration_ms": (data.get("total_duration") or 0) / 1_000_000,
+        "prompt_eval_duration_ms": (data.get("prompt_eval_duration") or 0) / 1_000_000,
+        "eval_duration_ms": (data.get("eval_duration") or 0) / 1_000_000,
+    }
 
 
     match = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -115,5 +133,6 @@ def generate(data: Req):
     return {
         "model_used": model_name,
         "target_framework": fw_slug,
+        "metrics": metrics,
         "result": parsed
     }
